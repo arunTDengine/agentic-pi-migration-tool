@@ -1,0 +1,219 @@
+{
+  "name": "Agentic PI Migration Upgrade — Summit Creek Oil",
+  "description": "Reference scenario: PI Vision-style displays recreated on TDengine IDMP when historian tags match.",
+  "displays": [
+    {
+      "name": "Eagle Ford Production Control Board",
+      "description": "PI Vision operations overview → IDMP control-room dashboard.",
+      "element_id": 2023515258075392,
+      "dashboard_id": 2025648565328640,
+      "theme": "control-room",
+      "refresh_seconds": 15,
+      "header_html": "<div style='padding:14px 18px;background:linear-gradient(90deg,#081426,#0f2847);border-bottom:2px solid #c8922a;border-radius:10px;color:#e2e8f0'><div style='font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#94a3b8'>Summit Creek Energy | Agentic PI Migration</div><div style='font-size:24px;font-weight:600;margin-top:4px;color:#f3f4f6'>Eagle Ford Production Control Board</div></div>",
+      "panels": [
+        {
+          "key": "fleet_kpi",
+          "title": "Fleet Production Summary",
+          "type": "kpi",
+          "element_id": 2023515258075392,
+          "prompt": "stat card for total oil production bpd and total gas production mcfd",
+          "pi_tags": ["total_oil_production_bpd", "total_gas_production_mcfd"]
+        },
+        {
+          "key": "reliability",
+          "title": "Station Reliability Index",
+          "type": "gauge",
+          "element_id": 2023515258075392,
+          "prompt": "gauge 0-100 for asset health percent with alarm zones",
+          "pi_tags": ["asset_health_pct"]
+        },
+        {
+          "key": "allocation",
+          "title": "Production Allocation by Station",
+          "type": "pie",
+          "element_id": 2023515258075392,
+          "prompt": "pie chart oil production share Eagle Ford A vs B",
+          "pi_tags": ["total_oil_production_bpd"]
+        },
+        {
+          "key": "trend",
+          "title": "15-Minute Production Profile",
+          "type": "trend",
+          "element_id": 2023515258075392,
+          "prompt": "line chart oil bpd and gas mcfd over last 15 minutes",
+          "pi_tags": ["total_oil_production_bpd", "total_gas_production_mcfd"]
+        },
+        {
+          "key": "kpi_snapshot",
+          "title": "Fleet KPI Snapshot",
+          "type": "bar-gauge",
+          "element_id": 2023515258075392,
+          "prompt": "bar-gauge for oil gas alarms and asset health",
+          "pi_tags": ["total_oil_production_bpd", "active_alarm_count", "asset_health_pct"]
+        }
+      ],
+      "layout": [
+        {"panel": "header", "col": 0, "row": 0, "w": 24, "h": 2},
+        {"panel": "fleet_kpi", "col": 0, "row": 2, "w": 8, "h": 4},
+        {"panel": "reliability", "col": 8, "row": 2, "w": 8, "h": 4},
+        {"panel": "allocation", "col": 16, "row": 2, "w": 8, "h": 4},
+        {"panel": "trend", "col": 0, "row": 6, "w": 16, "h": 8},
+        {"panel": "kpi_snapshot", "col": 16, "row": 6, "w": 8, "h": 8}
+      ]
+    },
+    {
+      "name": "P-101 Mechanical Performance Monitor",
+      "description": "PI Vision pump detail → IDMP rotating equipment dashboard.",
+      "element_id": 2023515242121480,
+      "dashboard_id": 2025648565586688,
+      "theme": "rotating",
+      "refresh_seconds": 15,
+      "header_html": "<div style='padding:14px 18px;background:linear-gradient(90deg,#1a120c,#2d1f14);border-bottom:2px solid #dc6b2f;border-radius:10px;color:#f5f5f4'><div style='font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#a8a29e'>Agentic PI Migration | Rotating Equipment</div><div style='font-size:24px;font-weight:600;margin-top:4px;color:#fafaf9'>P-101 Mechanical Performance Monitor</div></div>",
+      "panels": [
+        {
+          "key": "vibration_gauge",
+          "title": "Vibration Severity Index",
+          "type": "gauge",
+          "element_id": 2023515242121480,
+          "prompt": "gauge for vibration mm/s with alarm bands at 2.5 and 6.0",
+          "pi_tags": ["vibration_mm_s"]
+        },
+        {
+          "key": "electrical",
+          "title": "Electrical & Thermal Load",
+          "type": "kpi",
+          "element_id": 2023515242121480,
+          "prompt": "stat card motor current and bearing temperature",
+          "pi_tags": ["motor_current_a", "bearing_temp_f"]
+        },
+        {
+          "key": "pressure_bar",
+          "title": "Suction vs Discharge Pressure",
+          "type": "bar",
+          "element_id": 2023515242121480,
+          "prompt": "bar chart latest suction vs discharge pressure",
+          "pi_tags": ["suction_pressure_psi", "discharge_pressure_psi"]
+        },
+        {
+          "key": "hydraulic_trend",
+          "title": "Hydraulic Performance Trend",
+          "type": "trend",
+          "element_id": 2023515242121480,
+          "prompt": "line chart suction and discharge pressure last 15 minutes",
+          "pi_tags": ["suction_pressure_psi", "discharge_pressure_psi"]
+        },
+        {
+          "key": "envelope",
+          "title": "Operating Envelope Analysis",
+          "type": "scatter",
+          "element_id": 2023515242121480,
+          "prompt": "scatter discharge pressure vs vibration last 15 minutes",
+          "pi_tags": ["discharge_pressure_psi", "vibration_mm_s"]
+        },
+        {
+          "key": "timeline",
+          "title": "Run Condition Timeline",
+          "type": "state",
+          "element_id": 2023515242121480,
+          "prompt": "state-history vibration threshold states normal warning alarm",
+          "pi_tags": ["vibration_mm_s"]
+        },
+        {
+          "key": "standby",
+          "title": "Primary vs Standby Performance",
+          "type": "bar",
+          "element_id": 2023515242121480,
+          "prompt": "grouped bar comparing P101 and P102 vibration pressure current",
+          "pi_tags": ["vibration_mm_s", "discharge_pressure_psi", "motor_current_a"]
+        }
+      ],
+      "layout": [
+        {"panel": "header", "col": 0, "row": 0, "w": 24, "h": 2},
+        {"panel": "vibration_gauge", "col": 0, "row": 2, "w": 8, "h": 5},
+        {"panel": "electrical", "col": 8, "row": 2, "w": 8, "h": 5},
+        {"panel": "pressure_bar", "col": 16, "row": 2, "w": 8, "h": 5},
+        {"panel": "hydraulic_trend", "col": 0, "row": 7, "w": 16, "h": 8},
+        {"panel": "envelope", "col": 16, "row": 7, "w": 8, "h": 8},
+        {"panel": "timeline", "col": 0, "row": 15, "w": 12, "h": 6},
+        {"panel": "standby", "col": 12, "row": 15, "w": 12, "h": 6}
+      ]
+    },
+    {
+      "name": "SEP-101 Vessel Operations Display",
+      "description": "PI Vision separator display → IDMP process dashboard.",
+      "element_id": 2023515266914568,
+      "dashboard_id": 2025648565914368,
+      "theme": "process",
+      "refresh_seconds": 15,
+      "header_html": "<div style='padding:14px 18px;background:linear-gradient(90deg,#0a1f1c,#123831);border-bottom:2px solid #14b8a6;border-radius:10px;color:#ecfeff'><div style='font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#99f6e4'>Agentic PI Migration | Process Operations</div><div style='font-size:24px;font-weight:600;margin-top:4px;color:#f0fdfa'>SEP-101 Vessel Operations Display</div></div>",
+      "panels": [
+        {
+          "key": "level",
+          "title": "Vessel Inventory Level",
+          "type": "gauge",
+          "element_id": 2023515266914568,
+          "prompt": "gauge level percent with high-level alarm at 72",
+          "pi_tags": ["level_pct"]
+        },
+        {
+          "key": "summary",
+          "title": "Process Variable Summary",
+          "type": "kpi",
+          "element_id": 2023515266914568,
+          "prompt": "stat card pressure flow temperature latest",
+          "pi_tags": ["pressure_psi", "flow_rate_bpd", "temperature_f"]
+        },
+        {
+          "key": "feedstream",
+          "title": "Feedstream Contribution",
+          "type": "pie",
+          "element_id": 2023515250866432,
+          "prompt": "pie chart oil flow WH101 WH102 WH103",
+          "pi_tags": ["oil_flow_bpd"]
+        },
+        {
+          "key": "dynamics",
+          "title": "Level and Flow Dynamics",
+          "type": "trend",
+          "element_id": 2023515266914568,
+          "prompt": "line chart level percent and flow bpd last 15 minutes",
+          "pi_tags": ["level_pct", "flow_rate_bpd"]
+        },
+        {
+          "key": "correlation",
+          "title": "Temperature-Flow Correlation",
+          "type": "scatter",
+          "element_id": 2023515266914568,
+          "prompt": "scatter temperature vs flow last 15 minutes",
+          "pi_tags": ["temperature_f", "flow_rate_bpd"]
+        },
+        {
+          "key": "pipeline",
+          "title": "Pipeline Pressure Differential",
+          "type": "bar",
+          "element_id": 2023515266914560,
+          "prompt": "bar chart inlet outlet and differential PL101",
+          "pi_tags": ["pressure_psi", "secondary_pressure_psi"]
+        },
+        {
+          "key": "snapshot",
+          "title": "Process Variable Snapshot",
+          "type": "bar-gauge",
+          "element_id": 2023515266914568,
+          "prompt": "bar-gauge level pressure temperature flow",
+          "pi_tags": ["level_pct", "pressure_psi", "temperature_f", "flow_rate_bpd"]
+        }
+      ],
+      "layout": [
+        {"panel": "header", "col": 0, "row": 0, "w": 24, "h": 2},
+        {"panel": "level", "col": 0, "row": 2, "w": 8, "h": 5},
+        {"panel": "summary", "col": 8, "row": 2, "w": 8, "h": 5},
+        {"panel": "feedstream", "col": 16, "row": 2, "w": 8, "h": 5},
+        {"panel": "dynamics", "col": 0, "row": 7, "w": 12, "h": 7},
+        {"panel": "correlation", "col": 12, "row": 7, "w": 12, "h": 7},
+        {"panel": "pipeline", "col": 0, "row": 14, "w": 12, "h": 6},
+        {"panel": "snapshot", "col": 12, "row": 14, "w": 12, "h": 6}
+      ]
+    }
+  ]
+}
