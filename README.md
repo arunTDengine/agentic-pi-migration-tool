@@ -119,6 +119,55 @@ PI Vision display inventory          IDMP asset model (elements + attributes)
 
 **Prerequisite:** PI tags must map to IDMP element attributes (e.g. `SUMMIT_CREEK_ENERGY...P101.vibration_mm_s` → `SCE-AST-EFA-P101.vibration_mm_s`).
 
+## Editable P&ID Canvas
+
+Use `process`, `pid`, or `pnid` in `tags.csv` to route a display to the Canvas
+migrator. The result is an editable Meta2d dashboard, not a flattened image.
+It can contain equipment symbols, animated flows, live Formula bindings, and
+embedded IDMP trend or KPI panels.
+
+Add a `canvas` plan to the display's optional `display.json`:
+
+```json
+{
+  "name": "Pump Train P&ID",
+  "element_id": 42,
+  "canvas": {
+    "width": 1600,
+    "height": 900,
+    "equipment": [
+      {"id": "feed", "label": "Feed Tank", "type": "tank", "x": 100, "y": 300},
+      {"id": "p101", "label": "P-101", "type": "pump", "x": 650, "y": 300}
+    ],
+    "flows": [
+      {"from": "feed", "to": "p101", "kind": "water", "animated": true}
+    ]
+  }
+}
+```
+
+See [harness/FOLDER_SPEC.md](harness/FOLDER_SPEC.md) for equipment, flow,
+placement, and raw `pens` options.
+
+### High-fidelity reference build
+
+[`build_plant_ops_canvas.py`](build_plant_ops_canvas.py) is the complete REST-only
+reference used to build the Desert Peak Solar Farm live microgrid P&ID. It
+demonstrates a 5200×2800 Canvas, animated AC/DC paths, live inverter values,
+embedded charts, verification queries, and a generated report.
+
+```bash
+export IDMP_URL=http://localhost:6842
+export IDMP_API_KEY='your-api-key'
+# Or set IDMP_USER and IDMP_PASSWORD instead.
+
+python build_plant_ops_canvas.py
+```
+
+The reference contains deployment-specific element and attribute IDs near the
+top of the file; update those constants for another asset model. Re-running it
+replaces only the prior dashboard with the same name and its embedded panels.
+
 ## Customer folder layout
 
 Each PI Vision display is one subfolder with `screenshot.png`, `tags.csv`, and optional `display.json`. Multiple PI tags in one CSV cell are separated with `|` (pipe).
@@ -249,7 +298,7 @@ does not modify source data.
 ## Quick start (Summit Creek oil)
 
 ```bash
-cd agentic-pi-migration
+cd agentic-pi-migration-tool
 export IDMP_URL=http://localhost:7142
 export IDMP_USER=arun@tdengine.com
 export IDMP_PASSWORD='your-password'
