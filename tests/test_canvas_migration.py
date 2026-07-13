@@ -10,7 +10,7 @@ from typing import Any
 from agentic_pi_migration.canvas import CanvasBuilder
 from agentic_pi_migration.folder_intake import ingest_folder
 from agentic_pi_migration.loader import load_dashboards
-from agentic_pi_migration.migrator import AgenticPiMigrator
+from agentic_pi_migration.migrator import AgenticPiMigrator, PanelSpec, SeriesBinding
 
 
 class FakeClient:
@@ -45,6 +45,31 @@ class FakeClient:
 
 
 class CanvasMigrationTests(unittest.TestCase):
+    def test_series_alias_never_starts_with_a_digit(self) -> None:
+        self.assertEqual(
+            AgenticPiMigrator._safe_alias("54FC007.PV"),
+            "series_54FC007_PV",
+        )
+
+    def test_raw_line_series_does_not_add_invalid_interval_window(self) -> None:
+        spec = PanelSpec(
+            key="flow",
+            title="Flow",
+            panel_type="trend",
+            element_id=42,
+            prompt="",
+            series=[SeriesBinding(42, "52FC001.PV", "52FC001.PV")],
+        )
+
+        panel = AgenticPiMigrator(FakeClient())._panel_body_from_series(
+            spec,
+            dashboard_element_id=42,
+            time_from="now-8h",
+            time_to="now",
+        )
+
+        self.assertIsNone(panel["yaAttributes"][0]["window"])
+
     def test_process_scenario_routes_to_canvas(self) -> None:
         scenario = {
             "name": "Pump Train P&ID",

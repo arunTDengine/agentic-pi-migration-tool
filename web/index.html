@@ -121,6 +121,9 @@
           <div class="option-card">
             <label class="checkbox"><input type="checkbox" id="create-new"><span><strong>Create new dashboards</strong><small>Ignore dashboard IDs already present in the scenario.</small></span></label>
           </div>
+          <div class="option-card" id="assist-option">
+            <label class="checkbox"><input type="checkbox" id="external-assist" checked><span><strong>External LLM helps IDMP create panels</strong><small>OpenAI co-pilots prompts → IDMP internal AI builds the panel (series fallback if needed).</small></span></label>
+          </div>
           <details class="type-map">
             <summary>View PI Vision → IDMP type compatibility</summary>
             <table id="type-map-table"><caption>Supported migration types</caption><thead><tr><th>PI Vision</th><th>IDMP destination</th></tr></thead><tbody></tbody></table>
@@ -140,8 +143,16 @@
           <div class="panel-heading"><div><span class="eyebrow">Step 5 of 5</span><h2 id="step-5-title" tabindex="-1">Publish to IDMP</h2></div><span id="publish-status" class="feature-chip">Ready</span></div>
           <p class="lead">Migration Studio will create dashboards through the compatible IDMP REST API. Your source data remains untouched.</p>
           <div id="publish-summary" class="publish-summary"></div>
-          <div id="migrate-progress" class="progress hidden" aria-live="assertive" aria-busy="true"><div class="spinner"></div><div><strong>Publishing dashboards</strong><span>This may take a minute per display.</span></div></div>
+          <div id="migrate-progress" class="progress hidden" aria-live="assertive" aria-busy="true">
+            <div class="spinner"></div>
+            <div class="progress-copy">
+              <strong id="progress-title">Publishing dashboards</strong>
+              <span id="progress-detail">This may take a minute per display.</span>
+              <ol id="progress-log" class="progress-log" aria-label="Live progress"></ol>
+            </div>
+          </div>
           <div id="migrate-results" class="results" aria-live="polite"></div>
+          <div id="qa-results" class="qa-results" aria-live="polite"></div>
           <div class="actions">
             <button type="button" class="btn secondary" id="btn-step5-back">← Refine</button>
             <button type="button" class="btn secondary" id="btn-start-over">Start over</button>

@@ -8,6 +8,7 @@ from typing import Any
 
 from .canvas import CanvasBuilder, panel_card
 from .client import IdmpClient
+from .qa.assist import assist_enabled, enrich_or_passthrough
 
 # PI Vision symbol / display type → IDMP panel type
 PI_TO_IDMP_PANEL: dict[str, str] = {
@@ -123,26 +124,87 @@ THEMES: dict[str, dict[str, Any]] = {
 class AgenticPiMigrator:
     """Recreates PI Vision-style displays on IDMP via REST + AI panel generation."""
 
-    def __init__(self, client: IdmpClient, *, workers: int = 3, prompt_context: str = "") -> None:
+    def __init__(
+        self,
+        client: IdmpClient,
+        *,
+        workers: int = 3,
+        prompt_context: str = "",
+        external_assist: bool | None = None,
+    ) -> None:
         self.client = client
         self.workers = workers
         self.prompt_context = prompt_context.strip()
+        self.external_assist = assist_enabled(external_assist)
+        self.assist_log: list[dict[str, Any]] = []
 
     @staticmethod
     def map_pi_type(pi_symbol: str) -> str:
         return PI_TO_IDMP_PANEL.get(pi_symbol.lower().strip(), "line")
 
-    def _build_ai_prompt(self, spec: PanelSpec) -> str:
+    def _build_ai_prompt(
+        self,
+        spec: PanelSpec,
+        *,
+        time_from: str = "now-15m",
+        time_to: str = "now",
+    ) -> str:
         idmp_type = self.map_pi_type(spec.panel_type)
         tag_hint = ""
         if spec.pi_tags:
             tag_hint = f" PI tags: {', '.join(spec.pi_tags)}."
-        return (
+        base = (
             f"Create ONLY a {idmp_type} chart — no table unless type is table. "
             f"Industrial SCADA / PI Vision migration quality. "
             f"Professional title: '{spec.title}'. {spec.prompt}.{tag_hint}"
             + (f" Additional context: {self.prompt_context}." if self.prompt_context else "")
+            + f" Use live window {time_from} → {time_to}."
         )
+        enriched, meta = enrich_or_passthrough(
+            base_prompt=base,
+            title=spec.title,
+            panel_type=spec.panel_type,
+            idmp_type=idmp_type,
+            prompt=spec.prompt,
+            pi_tags=list(spec.pi_tags or []),
+            prompt_context=self.prompt_context,
+            time_from=time_from,
+            time_to=time_to,
+            enabled=self.external_assist,
+        )
+        if meta is not None:
+            self.assist_log.append(
+                {
+                    "panel": spec.key,
+                    "title": spec.title,
+                    "assisted": "error" not in meta,
+                    "meta": meta,
+                }
+            )
+        return enriched
+
+    def _try_idmp_ai_panel(
+        self,
+        spec: PanelSpec,
+        *,
+        time_from: str,
+        time_to: str,
+    ) -> dict[str, Any] | None:
+        """External LLM enriches prompt → IDMP internal AI creates panel. None on failure."""
+        prompt = self._build_ai_prompt(spec, time_from=time_from, time_to=time_to)
+        try:
+            panel = self.client.ai_create_panel(spec.element_id, prompt)
+        except RuntimeError:
+            return None
+        idmp_type = panel.get("panelType", self.map_pi_type(spec.panel_type))
+        panel["name"] = spec.title
+        chart = panel.get("chart") or {}
+        graph = chart.get("graph") or {}
+        graph["title"] = spec.title
+        chart["graph"] = graph
+        panel["chart"] = chart
+        self._apply_live_window(panel, idmp_type, time_from=time_from, time_to=time_to)
+        return panel
 
     def _create_text_panel(self, element_id: int, html: str, *, name: str = "Display Banner") -> dict[str, Any]:
         return {
@@ -164,7 +226,11 @@ class AgenticPiMigrator:
         """TDengine rejects dotted aliases in INTERVAL queries (e.g. 54FC007.PV)."""
         import re
         cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", alias).strip("_")
-        return cleaned or "series"
+        if not cleaned:
+            return "series"
+        if cleaned[0].isdigit():
+            return f"series_{cleaned}"
+        return cleaned
 
     @staticmethod
     def _series_ya(binding: SeriesBinding, *, dashboard_element_id: int) -> dict[str, Any]:
@@ -274,8 +340,9 @@ class AgenticPiMigrator:
         time_from: str,
         time_to: str,
     ) -> dict[str, Any]:
-        # Prefer explicit series bindings (accurate for hierarchical GTU-style models).
-        if spec.series:
+        # Prefer explicit series bindings (accurate for hierarchical GTU-style models),
+        # unless external assist is on — then try IDMP AI first with a co-piloted prompt.
+        if spec.series and not self.external_assist:
             return self._create_panel_from_series(
                 spec,
                 dashboard_element_id=dashboard_element_id,
@@ -283,46 +350,37 @@ class AgenticPiMigrator:
                 time_to=time_to,
             )
 
-        prompt = self._build_ai_prompt(spec)
-        try:
-            panel = self.client.ai_create_panel(spec.element_id, prompt)
-        except RuntimeError:
-            # AI unavailable — fall back to a single-element line panel from pi_tags.
+        if self.external_assist or not spec.series:
+            ai_panel = self._try_idmp_ai_panel(spec, time_from=time_from, time_to=time_to)
+            if ai_panel is not None:
+                panel_id = self.client.create_panel(spec.element_id, ai_panel)
+                saved = self.client.get_panel(spec.element_id, panel_id)
+                idmp_type = saved.get("panelType", self.map_pi_type(spec.panel_type))
+                self._apply_live_window(saved, idmp_type, time_from=time_from, time_to=time_to)
+                self.client.update_panel(spec.element_id, panel_id, saved)
+                return {
+                    "panelId": panel_id,
+                    "elementId": spec.element_id,
+                    "type": idmp_type,
+                    "key": spec.key,
+                    "title": spec.title,
+                    "assisted": self.external_assist,
+                }
+
+        # Fall back to explicit series / pi_tags
+        if not spec.series:
             if not spec.pi_tags:
-                raise
+                raise RuntimeError(f"No series or pi_tags for panel {spec.key}")
             spec.series = [
                 SeriesBinding(element_id=spec.element_id, attr=tag, alias=tag)
                 for tag in spec.pi_tags
             ]
-            return self._create_panel_from_series(
-                spec,
-                dashboard_element_id=dashboard_element_id,
-                time_from=time_from,
-                time_to=time_to,
-            )
-
-        idmp_type = panel.get("panelType", self.map_pi_type(spec.panel_type))
-
-        panel["name"] = spec.title
-        chart = panel.get("chart") or {}
-        graph = chart.get("graph") or {}
-        graph["title"] = spec.title
-        chart["graph"] = graph
-        panel["chart"] = chart
-
-        panel_id = self.client.create_panel(spec.element_id, panel)
-        saved = self.client.get_panel(spec.element_id, panel_id)
-        self._apply_live_window(saved, idmp_type, time_from=time_from, time_to=time_to)
-        self._qualify_child_attributes(saved, spec.element_id, dashboard_element_id)
-        self.client.update_panel(spec.element_id, panel_id, saved)
-
-        return {
-            "panelId": panel_id,
-            "elementId": spec.element_id,
-            "type": idmp_type,
-            "key": spec.key,
-            "title": spec.title,
-        }
+        return self._create_panel_from_series(
+            spec,
+            dashboard_element_id=dashboard_element_id,
+            time_from=time_from,
+            time_to=time_to,
+        )
 
     @staticmethod
     def _qualify_child_attributes(
@@ -385,7 +443,14 @@ class AgenticPiMigrator:
         if use_interval and panel_type in ("line", "bar", "scatter", "state-history", "stat", "bar-gauge"):
             for key in ("yaAttributes", "xaAttributes"):
                 for attr in panel.get(key) or []:
-                    attr["window"] = {**(attr.get("window") or {}), **DEFAULT_WINDOW}
+                    # Raw attributes cannot be selected directly in a TDengine
+                    # INTERVAL query. Apply the window only when the series has
+                    # an aggregate function (AVG, MAX, and so on).
+                    if attr.get("function"):
+                        attr["window"] = {
+                            **(attr.get("window") or {}),
+                            **DEFAULT_WINDOW,
+                        }
 
     def _canvas_inline_panel(self, spec: PanelSpec, dashboard: DashboardSpec) -> dict[str, Any]:
         """Build an inline canvas panel without changing source data."""
@@ -395,6 +460,17 @@ class AgenticPiMigrator:
                 SeriesBinding(element_id=spec.element_id, attr=tag, alias=tag)
                 for tag in spec.pi_tags
             ]
+
+        # External LLM co-pilot → IDMP AI, when enabled (series remain the safety net).
+        if self.external_assist and not process_type:
+            ai_panel = self._try_idmp_ai_panel(
+                spec,
+                time_from=dashboard.time_from,
+                time_to=dashboard.time_to,
+            )
+            if ai_panel is not None:
+                return ai_panel
+
         if spec.series:
             return self._panel_body_from_series(
                 spec,
@@ -550,6 +626,8 @@ class AgenticPiMigrator:
             "pens": len(all_pens),
             "panels_live": live,
             "panels_failed": failed,
+            "external_assist": self.external_assist,
+            "assist_log": list(self.assist_log),
             "url": f"{self.client.base_url}/explorer/dashboard?id={dashboard_id}",
             "edit_url": (
                 f"{self.client.base_url}/explorer/canvas-dashboard-create/{dashboard_id}"
@@ -633,5 +711,7 @@ class AgenticPiMigrator:
             "element_id": spec.element_id,
             "name": spec.name,
             "panel_count": len(layout),
+            "external_assist": self.external_assist,
+            "assist_log": list(self.assist_log),
             "url": f"{self.client.base_url}/explorer/dashboard?id={dashboard_id}",
         }

@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,8 @@ from agentic_pi_migration.folder_intake import ingest_folder
 from agentic_pi_migration.idmp_compat import COMMON_IDMP_PORTS, discover_local_idmp
 from agentic_pi_migration.loader import load_dashboards
 from agentic_pi_migration.migrator import AgenticPiMigrator, PI_TO_IDMP_PANEL
+from agentic_pi_migration.qa import run_quality_check
+from agentic_pi_migration.qa.llm import llm_config_from_env
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
@@ -32,6 +34,7 @@ BUILTIN_EXAMPLES: dict[str, str] = {
     "summit-creek-oil": "Summit Creek oil — 3 dashboards (ops, P-101, SEP-101)",
     "examples/ops-overview": "Single display folder intake example",
     "examples/pump-train-pnid": "Editable P&ID — animated pump train Canvas",
+    "examples/houston-refinery-pivision": "PI Vision image demo — Houston refinery column",
 }
 
 
@@ -93,9 +96,18 @@ class MigrateRequest(BaseModel):
     workers: int = Field(default=3, ge=1, le=8)
     prompt_context: str = ""
     panel_prompts: dict[str, str] = Field(default_factory=dict)
+    run_qa: bool = True
+    external_assist: bool | None = None
+
+
+class QaRequest(BaseModel):
+    job_id: str
+    structural_only: bool = False
+    include_screenshot: bool = True
 
 
 def _default_config() -> dict[str, Any]:
+    qa_cfg = llm_config_from_env()
     return {
         "idmp_url": os.environ.get(
             "IDMP_URL",
@@ -104,6 +116,11 @@ def _default_config() -> dict[str, Any]:
         "user": os.environ.get("IDMP_USER", os.environ.get("IDMP_USERNAME", "")),
         "has_password": bool(os.environ.get("IDMP_PASSWORD")),
         "has_api_key": bool(os.environ.get("IDMP_API_KEY")),
+        "has_qa_llm": bool(qa_cfg.get("api_key")),
+        "qa_llm_provider": qa_cfg.get("provider"),
+        "qa_llm_model": qa_cfg.get("model") if qa_cfg.get("api_key") else None,
+        "qa_assist_panels": os.environ.get("QA_LLM_ASSIST_PANELS", "1").strip().lower()
+        not in ("0", "false", "no", "off"),
         "default_ports": list(COMMON_IDMP_PORTS),
         "running_in_docker": bool(os.environ.get("RUNNING_IN_DOCKER")),
     }
@@ -177,13 +194,23 @@ def _retarget_scenario(scenario: dict[str, Any], element_id: int) -> None:
                 binding["element_id"] = element_id
 
 
-def _create_job(scenario: dict[str, Any], *, source: str, scenario_path: Path) -> dict[str, Any]:
+def _create_job(
+    scenario: dict[str, Any],
+    *,
+    source: str,
+    scenario_path: Path,
+    folder_path: Path | None = None,
+) -> dict[str, Any]:
     job_id = uuid.uuid4().hex[:12]
+    resolved_folder = folder_path or (
+        Path(scenario["source_folder"]) if scenario.get("source_folder") else None
+    )
     job = {
         "id": job_id,
         "source": source,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "scenario_path": str(scenario_path),
+        "folder_path": str(resolved_folder) if resolved_folder else None,
         "summary": _scenario_summary(scenario),
     }
     jobs[job_id] = job
@@ -283,7 +310,12 @@ async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    job = _create_job(scenario, source=f"upload:{file.filename}", scenario_path=scenario_path)
+    job = _create_job(
+        scenario,
+        source=f"upload:{file.filename}",
+        scenario_path=scenario_path,
+        folder_path=root,
+    )
     return {"job_id": job["id"], "summary": job["summary"]}
 
 
@@ -296,6 +328,7 @@ def ingest_example(body: ExampleIngestRequest) -> dict[str, Any]:
     job_dir = UPLOADS_DIR / uuid.uuid4().hex[:12]
     job_dir.mkdir(parents=True, exist_ok=True)
     scenario_path = job_dir / "scenario.json"
+    folder_path: Path | None = None
 
     try:
         if example_id.startswith("examples/"):
@@ -303,6 +336,7 @@ def ingest_example(body: ExampleIngestRequest) -> dict[str, Any]:
             if not folder.is_dir():
                 raise HTTPException(status_code=404, detail=f"Example folder not found: {example_id}")
             scenario = ingest_folder(folder)
+            folder_path = folder
         else:
             src = SCENARIOS_DIR / f"{example_id}.json"
             if not src.exists():
@@ -318,7 +352,12 @@ def ingest_example(body: ExampleIngestRequest) -> dict[str, Any]:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    job = _create_job(scenario, source=f"example:{example_id}", scenario_path=scenario_path)
+    job = _create_job(
+        scenario,
+        source=f"example:{example_id}",
+        scenario_path=scenario_path,
+        folder_path=folder_path,
+    )
     return {"job_id": job["id"], "summary": job["summary"]}
 
 
@@ -351,6 +390,7 @@ def migrate(body: MigrateRequest) -> dict[str, Any]:
             client,
             workers=body.workers,
             prompt_context=body.prompt_context.strip(),
+            external_assist=body.external_assist,
         )
         dashboards = load_dashboards(scenario_path)
         if body.panel_prompts:
@@ -378,6 +418,9 @@ def migrate(body: MigrateRequest) -> dict[str, Any]:
         "results": results,
         "errors": errors,
     }
+    report_path = Path(job["scenario_path"]).with_name("migration-report.json")
+    report_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    job["report_path"] = str(report_path)
 
     return {
         "ok": len(errors) == 0,
@@ -385,7 +428,88 @@ def migrate(body: MigrateRequest) -> dict[str, Any]:
         "failed": len(errors),
         "results": results,
         "errors": errors,
+        "report_path": str(report_path),
+        "qa_available": bool(llm_config_from_env().get("api_key")),
     }
+
+
+@app.post("/api/qa/stream")
+def qa_stream(body: QaRequest) -> StreamingResponse:
+    """NDJSON stream of QA agent progress + final judgment (for Studio loading UI)."""
+    job = jobs.get(body.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    report_path = Path(job.get("report_path") or "")
+    if not report_path.exists():
+        # fall back to writing from last migration results
+        results = (job.get("migration") or {}).get("results")
+        if not results:
+            raise HTTPException(status_code=400, detail="No migration report yet — publish first.")
+        report_path = Path(job["scenario_path"]).with_name("migration-report.json")
+        report_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        job["report_path"] = str(report_path)
+
+    folder = Path(job["folder_path"]) if job.get("folder_path") else None
+    use_llm = not body.structural_only and bool(llm_config_from_env().get("api_key"))
+
+    def generate():
+        import queue
+        import threading
+
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+
+        def on_progress(event: dict[str, Any]) -> None:
+            # keep stream light — drop huge nested result until final
+            payload = {k: v for k, v in event.items() if k != "result"}
+            if "judgment" in payload and isinstance(payload["judgment"], dict):
+                j = payload["judgment"]
+                payload["judgment"] = {
+                    "verdict": j.get("verdict"),
+                    "overall_score": j.get("overall_score"),
+                    "strengths": j.get("strengths"),
+                    "issues": j.get("issues"),
+                    "fixes": j.get("fixes"),
+                    "dimensions": j.get("dimensions"),
+                }
+            events.put({"type": "progress", **payload})
+
+        def worker() -> None:
+            try:
+                events.put(
+                    {
+                        "type": "progress",
+                        "stage": "start",
+                        "message": (
+                            "Starting external LLM quality-check agent…"
+                            if use_llm
+                            else "Starting structural quality checks…"
+                        ),
+                        "use_llm": use_llm,
+                    }
+                )
+                result = run_quality_check(
+                    report_path,
+                    folder=folder,
+                    out_path=report_path.with_name("qa-report.json"),
+                    use_llm=use_llm,
+                    include_screenshot=body.include_screenshot,
+                    on_progress=on_progress,
+                )
+                job["qa"] = result
+                events.put({"type": "final", "result": result})
+            except Exception as exc:
+                events.put({"type": "error", "message": str(exc)})
+            finally:
+                events.put(None)
+
+        threading.Thread(target=worker, daemon=True).start()
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield json.dumps(item, default=str) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @app.get("/")

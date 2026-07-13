@@ -14,7 +14,7 @@ fi
 : "${IDMP_URL:=http://localhost:6042}"
 
 case "${1:-}" in
-  map-types|ingest-folder|discover)
+  map-types|ingest-folder|discover|qa)
     ;;
   *)
     if [[ -z "${IDMP_API_KEY:-}" ]]; then

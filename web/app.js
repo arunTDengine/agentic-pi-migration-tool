@@ -7,9 +7,18 @@ const state = {
   promptContext: "",
   panelPrompts: {},
   running: false,
+  hasQaLlm: false,
+  qaModel: null,
 };
 
 const STORAGE_KEY = "agentic-pi-migration-config";
+const PUBLISH_TIPS = [
+  "External LLM co-piloting prompts for IDMP panel AI…",
+  "IDMP internal AI creating live trend panels…",
+  "Creating Canvas pens and Formula bindings…",
+  "Publishing live trend panels to IDMP…",
+  "Wiring orthogonal pipelines and equipment…",
+];
 
 function $(id) {
   return document.getElementById(id);
@@ -45,9 +54,54 @@ async function loadDefaults() {
     const cfg = await res.json();
     if (!$("idmp-url").value) $("idmp-url").value = cfg.idmp_url || "";
     if (!$("idmp-user").value) $("idmp-user").value = cfg.user || "";
+    state.hasQaLlm = Boolean(cfg.has_qa_llm);
+    state.qaModel = cfg.qa_llm_model || null;
+    const assist = $("external-assist");
+    if (assist) {
+      assist.checked = Boolean(cfg.has_qa_llm) && cfg.qa_assist_panels !== false;
+      assist.disabled = !cfg.has_qa_llm;
+    }
+    const assistOpt = $("assist-option");
+    if (assistOpt && !cfg.has_qa_llm) {
+      assistOpt.title = "Set QA_LLM_API_KEY in .env to enable";
+    }
   } catch {
     /* offline or server not ready */
   }
+}
+
+function setProgress(title, detail) {
+  const titleEl = $("progress-title");
+  const detailEl = $("progress-detail");
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail || "";
+}
+
+function clearProgressLog() {
+  const log = $("progress-log");
+  if (log) log.innerHTML = "";
+}
+
+function appendProgressLog(message, stage) {
+  const log = $("progress-log");
+  if (!log || !message) return;
+  const li = document.createElement("li");
+  if (stage) li.className = `stage-${stage}`;
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  li.textContent = `${time}  ${message}`;
+  log.appendChild(li);
+  log.scrollTop = log.scrollHeight;
+}
+
+function startPublishTipRotation() {
+  let i = 0;
+  setProgress("Publishing dashboards", PUBLISH_TIPS[0]);
+  appendProgressLog(PUBLISH_TIPS[0], "publish");
+  return setInterval(() => {
+    i = (i + 1) % PUBLISH_TIPS.length;
+    setProgress("Publishing dashboards", PUBLISH_TIPS[i]);
+    appendProgressLog(PUBLISH_TIPS[i], "publish");
+  }, 2800);
 }
 
 function credentials() {
@@ -400,13 +454,19 @@ async function runMigration() {
 
   const progress = $("migrate-progress");
   const resultsEl = $("migrate-results");
+  const qaEl = $("qa-results");
   progress.classList.remove("hidden");
+  progress.setAttribute("aria-busy", "true");
   state.running = true;
   resultsEl.innerHTML = "";
+  if (qaEl) qaEl.innerHTML = "";
+  clearProgressLog();
   $("btn-start-over").disabled = true;
   $("btn-step5-back").disabled = true;
   $("btn-run-migration").classList.add("hidden");
   $("publish-status").textContent = "Publishing";
+
+  const tipTimer = startPublishTipRotation();
 
   try {
     saveConfig();
@@ -424,23 +484,195 @@ async function runMigration() {
         workers: 3,
         prompt_context: state.promptContext.trim(),
         panel_prompts: state.panelPrompts,
+        run_qa: true,
+        external_assist: $("external-assist") ? $("external-assist").checked : null,
       }),
     });
 
-    progress.classList.add("hidden");
+    clearInterval(tipTimer);
+    appendProgressLog(
+      `Published ${data.migrated} dashboard(s)` + (data.failed ? `, ${data.failed} failed` : ""),
+      "publish_done",
+    );
+    const assisted = (data.results || []).flatMap((r) => r.assist_log || []);
+    if (assisted.length) {
+      appendProgressLog(
+        `External LLM co-pilot touched ${assisted.filter((a) => a.assisted).length}/${assisted.length} panel prompt(s)`,
+        "assist",
+      );
+    }
     renderMigrationResults(data, creds.idmp_url);
-    $("publish-status").textContent = data.failed ? "Needs attention" : "Complete";
+
+    if (data.migrated > 0) {
+      $("publish-status").textContent = "QA agent";
+      setProgress(
+        "LLM quality check",
+        state.hasQaLlm
+          ? `External judge${state.qaModel ? ` · ${state.qaModel}` : ""} reviewing the IDMP panel…`
+          : "Structural checks (no QA_LLM_API_KEY — LLM judge skipped)",
+      );
+      appendProgressLog("Starting quality-check agent…", "start");
+      const qa = await runQaStream(state.jobId);
+      renderQaResults(qa);
+      $("publish-status").textContent =
+        qa?.verdict === "pass" ? "Complete" : qa?.verdict === "fail" ? "QA flagged" : "Needs review";
+    } else {
+      $("publish-status").textContent = data.failed ? "Needs attention" : "Complete";
+    }
   } catch (err) {
-    progress.classList.add("hidden");
+    clearInterval(tipTimer);
     $("publish-status").textContent = "Failed";
     resultsEl.innerHTML = `<div class="result-card fail"><h3>Migration failed</h3><p>${escapeHtml(err.message)}</p></div>`;
     $("btn-run-migration").textContent = "Try again";
     $("btn-run-migration").classList.remove("hidden");
   } finally {
+    clearInterval(tipTimer);
+    progress.classList.add("hidden");
+    progress.setAttribute("aria-busy", "false");
     state.running = false;
     $("btn-start-over").disabled = false;
     $("btn-step5-back").disabled = false;
   }
+}
+
+async function runQaStream(jobId) {
+  const res = await fetch("/api/qa/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      job_id: jobId,
+      structural_only: !state.hasQaLlm,
+      include_screenshot: true,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `QA failed (${res.status})`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.type === "progress") {
+        setProgress(
+          event.stage === "llm_start" || event.stage === "llm_done"
+            ? "LLM feedback"
+            : "Quality check",
+          event.message || "",
+        );
+        appendProgressLog(event.message || event.stage, event.stage);
+        if (event.judgment) {
+          appendProgressLog(
+            `LLM draft · score ${event.judgment.overall_score ?? "—"} · ${(event.judgment.issues || [])[0] || "rubric scored"}`,
+            "llm_done",
+          );
+          // Live preview while still loading
+          renderQaResults({
+            verdict: event.judgment.verdict || "needs_review",
+            overall_score: event.judgment.overall_score,
+            pass_score: 75,
+            strengths: event.judgment.strengths,
+            issues: event.judgment.issues,
+            fixes: event.judgment.fixes,
+            dimensions: event.judgment.dimensions,
+            llm: { provider: event.provider, model: event.model, judgment: event.judgment },
+            structural: event.structural,
+            preview: true,
+          });
+        }
+        if (event.structural && event.stage === "structural_done") {
+          const failed = (event.structural.critical_failures || []).join(", ") || "none";
+          appendProgressLog(`Critical structural failures: ${failed}`, "structural_done");
+        }
+      } else if (event.type === "final") {
+        finalResult = event.result;
+        appendProgressLog(
+          `QA verdict: ${finalResult.verdict} (${finalResult.overall_score}/${finalResult.pass_score})`,
+          "done",
+        );
+      } else if (event.type === "error") {
+        appendProgressLog(event.message || "QA error", "error");
+        throw new Error(event.message || "QA stream error");
+      }
+    }
+  }
+  return finalResult;
+}
+
+function renderQaResults(qa) {
+  const root = $("qa-results");
+  if (!root || !qa) return;
+  const verdict = qa.verdict || "needs_review";
+  const llm = qa.llm || {};
+  const judgment = llm.judgment || {};
+  const dims = qa.dimensions || judgment.dimensions || [];
+  const strengths = qa.strengths || judgment.strengths || [];
+  const issues = qa.issues || judgment.issues || [];
+  const fixes = qa.fixes || judgment.fixes || [];
+  const modelLine = llm.model
+    ? `${llm.provider || "llm"} · ${llm.model}`
+    : qa.preview
+      ? "LLM feedback streaming…"
+      : "structural only";
+
+  root.innerHTML = `
+    <div class="qa-card ${escapeHtml(verdict)}">
+      <h3>
+        ${qa.preview ? "Live LLM feedback" : "QA agent report"}
+        <span class="qa-score">${escapeHtml(String(verdict).replace("_", " "))} · ${escapeHtml(String(qa.overall_score ?? "—"))}/${escapeHtml(String(qa.pass_score ?? 75))}</span>
+      </h3>
+      <div class="qa-meta">${escapeHtml(modelLine)}${qa.primary?.url ? ` · <a href="${escapeHtml(qa.primary.url)}" target="_blank" rel="noopener">open panel</a>` : ""}</div>
+      ${
+        dims.length
+          ? `<div class="qa-dims">${dims
+              .map(
+                (d) =>
+                  `<div class="qa-dim"><strong>${escapeHtml(String(d.score ?? "—"))}</strong>${escapeHtml(d.id || "")}${d.notes ? `<div>${escapeHtml(d.notes)}</div>` : ""}</div>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
+      ${
+        strengths.length
+          ? `<strong style="font-size:.82rem">Strengths</strong><ul class="qa-list">${strengths
+              .slice(0, 5)
+              .map((s) => `<li>${escapeHtml(s)}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+      ${
+        issues.length
+          ? `<strong style="font-size:.82rem">Issues</strong><ul class="qa-list">${issues
+              .slice(0, 6)
+              .map((s) => `<li>${escapeHtml(s)}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+      ${
+        fixes.length
+          ? `<strong style="font-size:.82rem">Suggested fixes</strong><ul class="qa-list">${fixes
+              .slice(0, 5)
+              .map((s) => `<li>${escapeHtml(s)}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+    </div>`;
 }
 
 function renderPublishSummary() {
@@ -559,7 +791,9 @@ function bindEvents() {
     state.panelPrompts = {};
     $("ingest-status").classList.add("hidden");
     $("migrate-results").innerHTML = "";
+    if ($("qa-results")) $("qa-results").innerHTML = "";
     $("migrate-progress").classList.add("hidden");
+    clearProgressLog();
     $("btn-open-idmp").classList.add("hidden");
     $("btn-run-migration").classList.remove("hidden");
     $("btn-run-migration").textContent = "Publish dashboards";

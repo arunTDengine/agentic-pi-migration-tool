@@ -21,10 +21,12 @@ Usage:
   $0 validate [keyword]
   $0 ingest <customer-folder> [output.json]
   $0 migrate <scenario.json>
-  $0 full <customer-folder>          # ingest + migrate
+  $0 qa <report.json> [customer-folder]   # structural + optional external LLM judge
+  $0 full <customer-folder>               # ingest + migrate (+ qa if QA_LLM_API_KEY set)
 
 Environment:
   IDMP_URL and either IDMP_USER + IDMP_PASSWORD or IDMP_API_KEY
+  Optional QA: QA_LLM_API_KEY, QA_LLM_PROVIDER=openai|anthropic, QA_LLM_MODEL, QA_LLM_BASE_URL
 
 EOF
 }
@@ -47,12 +49,28 @@ case "$cmd" in
     mkdir -p reports
     ./run.sh migrate "$scenario" --report "reports/$(basename "$scenario" .json)-report.json"
     ;;
+  qa)
+    report="${1:?migration report json required}"
+    folder="${2:-}"
+    mkdir -p reports
+    if [[ -n "$folder" ]]; then
+      ./run.sh qa "$report" --folder "$folder" -o "reports/$(basename "$report" .json)-qa.json"
+    else
+      ./run.sh qa "$report" -o "reports/$(basename "$report" .json)-qa.json"
+    fi
+    ;;
   full)
     folder="${1:?customer folder required}"
     out="scenarios/generated-$(date +%Y%m%d-%H%M%S).json"
     ./run.sh ingest-folder "$folder" -o "$out"
     mkdir -p reports
     ./run.sh migrate "$out" --report "reports/latest.json"
+    if [[ -n "${QA_LLM_API_KEY:-}${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]]; then
+      ./run.sh qa reports/latest.json --folder "$folder" -o reports/latest-qa.json --allow-review
+    else
+      ./run.sh qa reports/latest.json --folder "$folder" -o reports/latest-qa.json --structural-only --allow-review
+      echo "Tip: set QA_LLM_API_KEY to enable external LLM panel QA"
+    fi
     ;;
   *)
     usage

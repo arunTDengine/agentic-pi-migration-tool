@@ -12,8 +12,20 @@ TAG_FILES = ("tags.csv", "tags.json")
 
 
 def _find_screenshot(folder: Path) -> Path | None:
+    preferred = (
+        "screenshot.png",
+        "screenshot.jpg",
+        "screenshot.jpeg",
+        "reference.png",
+        "reference.jpg",
+        "reference.jpeg",
+    )
+    for name in preferred:
+        candidate = folder / name
+        if candidate.is_file():
+            return candidate
     for path in sorted(folder.iterdir()):
-        if path.is_file() and path.suffix.lower() in IMAGE_EXT:
+        if path.is_file() and path.suffix.lower() in IMAGE_EXT and "demo" not in path.stem.lower():
             return path
     return None
 
@@ -192,13 +204,18 @@ def ingest_folder(folder: Path) -> dict[str, Any]:
         raise NotADirectoryError(folder)
 
     displays: list[dict[str, Any]] = []
-    subdirs = sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith("."))
+    skip_dirs = {"__pycache__", "node_modules", ".venv", "venv"}
+    subdirs = sorted(
+        p
+        for p in folder.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and p.name not in skip_dirs
+    )
 
     if subdirs:
         for sub in subdirs:
             if any((sub / n).exists() for n in TAG_FILES):
                 displays.append(_load_display_folder(sub))
-    elif any((folder / n).exists() for n in TAG_FILES):
+    if not displays and any((folder / n).exists() for n in TAG_FILES):
         displays.append(_load_display_folder(folder))
     else:
         raise FileNotFoundError(

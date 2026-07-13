@@ -14,6 +14,7 @@ from agentic_pi_migration.folder_intake import ingest_folder, write_scenario
 from agentic_pi_migration.idmp_compat import discover_local_idmp
 from agentic_pi_migration.loader import load_dashboards
 from agentic_pi_migration.migrator import AgenticPiMigrator, PI_TO_IDMP_PANEL
+from agentic_pi_migration.qa import run_quality_check
 
 
 def _env(name: str, default: str = "") -> str:
@@ -83,7 +84,13 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         args.password,
         api_key=args.api_key or None,
     )
-    migrator = AgenticPiMigrator(client, workers=args.workers)
+    migrator = AgenticPiMigrator(
+        client,
+        workers=args.workers,
+        external_assist=(
+            False if args.no_external_assist else (True if args.external_assist else None)
+        ),
+    )
     dashboards = load_dashboards(scenario)
 
     results = []
@@ -104,6 +111,37 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         report_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
         print(f"\nReport written: {report_path}")
 
+    return 0
+
+
+def cmd_qa(args: argparse.Namespace) -> int:
+    """External-LLM (or structural-only) quality check on a migration report."""
+    report = Path(args.report)
+    if not report.exists():
+        print(f"Report not found: {report}", file=sys.stderr)
+        return 1
+    out = Path(args.out) if args.out else report.with_name(report.stem + "-qa.json")
+    result = run_quality_check(
+        report,
+        folder=args.folder,
+        display_path=args.display,
+        out_path=out,
+        use_llm=not args.structural_only,
+        include_screenshot=not args.no_screenshot,
+    )
+    print(f"QA verdict: {result['verdict']}  score={result['overall_score']}/{result['pass_score']}")
+    if result.get("primary", {}).get("url"):
+        print(f"Dashboard: {result['primary']['url']}")
+    structural = result.get("structural") or {}
+    if structural.get("critical_failures"):
+        print(f"Critical structural: {', '.join(structural['critical_failures'])}")
+    for issue in (result.get("issues") or [])[:8]:
+        print(f"  • {issue}")
+    print(f"Wrote {out}")
+    if result["verdict"] == "fail":
+        return 2
+    if result["verdict"] == "needs_review":
+        return 0 if args.allow_review else 3
     return 0
 
 
@@ -172,7 +210,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create new dashboards instead of updating dashboard_id in scenario",
     )
     p_migrate.add_argument("--report", help="Write migration report JSON to this path")
+    assist = p_migrate.add_mutually_exclusive_group()
+    assist.add_argument(
+        "--external-assist",
+        action="store_true",
+        help="Force external LLM co-pilot for IDMP panel AI",
+    )
+    assist.add_argument(
+        "--no-external-assist",
+        action="store_true",
+        help="Disable external LLM panel co-pilot",
+    )
     p_migrate.set_defaults(func=cmd_migrate)
+
+    p_qa = sub.add_parser(
+        "qa",
+        help="Quality-check a migrated IDMP panel/Canvas with structural + optional external LLM agent",
+    )
+    p_qa.add_argument("report", help="Migration report JSON (from ./run.sh migrate --report …)")
+    p_qa.add_argument(
+        "--folder",
+        help="Customer folder with screenshot + tags.csv + display.json (vision ground truth)",
+    )
+    p_qa.add_argument("--display", help="Path to display.json if not inside --folder")
+    p_qa.add_argument(
+        "-o",
+        "--out",
+        help="Write QA report JSON (default: <report>-qa.json)",
+    )
+    p_qa.add_argument(
+        "--structural-only",
+        action="store_true",
+        help="Skip external LLM; run deterministic checks only",
+    )
+    p_qa.add_argument(
+        "--no-screenshot",
+        action="store_true",
+        help="Do not attach reference screenshot to the LLM (text-only judge)",
+    )
+    p_qa.add_argument(
+        "--allow-review",
+        action="store_true",
+        help="Exit 0 on needs_review (default exit 3)",
+    )
+    p_qa.set_defaults(func=cmd_qa)
 
     return parser
 
@@ -180,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    if args.command not in ("map-types", "ingest-folder", "discover") and (
+    if args.command not in ("map-types", "ingest-folder", "discover", "qa") and (
         not args.api_key and (not args.user or not args.password)
     ):
         print(
