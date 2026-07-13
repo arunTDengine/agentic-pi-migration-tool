@@ -3,6 +3,7 @@ const state = {
   connected: false,
   jobId: null,
   summary: null,
+  elements: [],
   promptContext: "",
   panelPrompts: {},
   running: false,
@@ -174,6 +175,14 @@ async function testConnection() {
     });
 
     setConnected(true, new URL(data.idmp_url).host);
+    state.elements = data.elements || [];
+    const options = $("target-element-options");
+    options.innerHTML = state.elements
+      .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name || "")}</option>`)
+      .join("");
+    if (!$("target-element-id").value && state.elements.length) {
+      $("target-element-id").value = state.elements[0].id;
+    }
 
     const items = data.elements
       .map((e) => `<li><code>${e.id}</code> ${escapeHtml(e.name || "")}</li>`)
@@ -232,11 +241,21 @@ async function loadExamples() {
 }
 
 async function ingestExample(exampleId) {
+  const isPortablePnid = exampleId === "examples/pump-train-pnid";
+  const targetElementId = Number($("target-element-id").value);
+  if (isPortablePnid && (!Number.isInteger(targetElementId) || targetElementId <= 0)) {
+    showToast("Choose a target element ID for the P&ID example.", "error");
+    $("target-element-id").focus();
+    return;
+  }
   await runIngest(async () => {
     return api("/api/ingest/example", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ example_id: exampleId }),
+      body: JSON.stringify({
+        example_id: exampleId,
+        target_element_id: isPortablePnid ? targetElementId : null,
+      }),
     });
   }, `Loaded example: ${exampleId}`);
 }
@@ -283,14 +302,19 @@ function renderContextStep(summary) {
   const root = $("panel-prompts");
   root.innerHTML = "";
 
-  const hasPanels = (summary.displays || []).some((d) => (d.panels || []).length);
+  const canvasTypes = new Set(["process", "p&id", "pid", "pnid"]);
+  const hasPanels = (summary.displays || []).some((d) =>
+    (d.panels || []).some((p) => !canvasTypes.has(String(p.type || "").toLowerCase())),
+  );
   if (!hasPanels) {
-    root.innerHTML = "<p class='lead'>No panels to customize — global context above still applies.</p>";
+    root.innerHTML = "<p class='lead'>The Canvas equipment and flow plan controls this P&amp;ID. There are no AI-generated chart prompts to customize.</p>";
     return;
   }
 
   for (const d of summary.displays || []) {
-    const panels = d.panels || [];
+    const panels = (d.panels || []).filter(
+      (p) => !canvasTypes.has(String(p.type || "").toLowerCase()),
+    );
     if (!panels.length) continue;
 
     const section = document.createElement("div");
@@ -340,6 +364,7 @@ function renderReview(summary) {
         <span class="meta-chip">${d.dashboard_id ? `Dashboard ${d.dashboard_id}` : "New dashboard"}</span>
         <span class="meta-chip">${escapeHtml(d.dashboard_type || "grid")}</span>
         <span class="meta-chip">${d.panel_count} panel(s)</span>
+        ${d.has_canvas_plan ? `<span class="meta-chip">${d.canvas_equipment_count} equipment · ${d.canvas_flow_count} flows</span>` : ""}
         ${d.has_screenshot ? '<span class="meta-chip">Screenshot attached</span>' : ""}
       </div>
       <div class="panel-tags">

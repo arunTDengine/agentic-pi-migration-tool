@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from agentic_pi_migration.canvas import CanvasBuilder
@@ -107,6 +108,27 @@ class CanvasMigrationTests(unittest.TestCase):
                 ]
             )
 
+    def test_partial_panel_placements_keep_automatic_fallbacks(self) -> None:
+        builder = CanvasBuilder(
+            {
+                "width": 1600,
+                "height": 900,
+                "panel_top": 600,
+                "panel_placements": [
+                    {"panel": "pressure", "x": 80, "y": 620, "w": 700, "h": 220}
+                ],
+            }
+        )
+        layout = [
+            SimpleNamespace(panel_key="pressure", column=0, row=0, width=12, height=6),
+            SimpleNamespace(panel_key="vibration", column=12, row=0, width=12, height=6),
+        ]
+
+        placements = builder.panel_placements(["pressure", "vibration"], layout)
+
+        self.assertEqual(placements["pressure"]["x"], 80)
+        self.assertIn("vibration", placements)
+
     def test_folder_process_row_selects_canvas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
@@ -120,6 +142,25 @@ class CanvasMigrationTests(unittest.TestCase):
         self.assertEqual(display["dashboard_type"], "canvas")
         self.assertEqual(display["time_from"], "now-15m")
         self.assertIn("canvas", display)
+
+    def test_bundled_pnid_example_preserves_canvas_plan(self) -> None:
+        folder = (
+            Path(__file__).resolve().parents[1]
+            / "scenarios"
+            / "examples"
+            / "pump-train-pnid"
+        )
+
+        scenario = ingest_folder(folder)
+        display = scenario["displays"][0]
+
+        self.assertEqual(display["dashboard_type"], "canvas")
+        self.assertEqual(len(display["canvas"]["equipment"]), 3)
+        self.assertEqual(len(display["canvas"]["flows"]), 2)
+        self.assertEqual(
+            display["canvas"]["panel_placements"][0]["panel"],
+            "process_overview",
+        )
 
 
 if __name__ == "__main__":

@@ -147,8 +147,6 @@ class CanvasBuilder:
             }
             for p in (self.config.get("panel_placements") or [])
         }
-        if explicit:
-            return explicit
 
         placements: dict[str, dict[str, float]] = {}
         panel_top = float(self.config.get("panel_top", 1080))
@@ -162,16 +160,28 @@ class CanvasBuilder:
                 "w": max(240, (cell.width / 24) * (self.width - 120)),
                 "h": max(160, (cell.height / max(6, self._max_grid_row(grid_layout))) * panel_height),
             }
-        if placements:
-            return placements
 
-        count = max(1, len(panel_keys))
-        gap = 24
-        width = (self.width - 100 - gap * (count - 1)) / count
-        return {
-            key: {"x": 50 + i * (width + gap), "y": panel_top, "w": width, "h": panel_height}
-            for i, key in enumerate(panel_keys)
-        }
+        missing = [key for key in panel_keys if key not in placements]
+        if missing:
+            count = len(missing)
+            gap = 24
+            width = (self.width - 100 - gap * (count - 1)) / count
+            placements.update(
+                {
+                    key: {
+                        "x": 50 + i * (width + gap),
+                        "y": panel_top,
+                        "w": width,
+                        "h": panel_height,
+                    }
+                    for i, key in enumerate(missing)
+                }
+            )
+
+        # Exact placements override generated positions, while unspecified
+        # panels retain a safe automatic position.
+        placements.update(explicit)
+        return placements
 
     def validate_bounds(self, pens: list[dict[str, Any]]) -> None:
         for pen in pens:

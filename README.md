@@ -119,54 +119,58 @@ PI Vision display inventory          IDMP asset model (elements + attributes)
 
 **Prerequisite:** PI tags must map to IDMP element attributes (e.g. `SUMMIT_CREEK_ENERGY...P101.vibration_mm_s` → `SCE-AST-EFA-P101.vibration_mm_s`).
 
-## Editable P&ID Canvas
+## Create an editable P&ID
 
-Use `process`, `pid`, or `pnid` in `tags.csv` to route a display to the Canvas
-migrator. The result is an editable Meta2d dashboard, not a flattened image.
-It can contain equipment symbols, animated flows, live Formula bindings, and
-embedded IDMP trend or KPI panels.
+P&IDs publish as editable IDMP Canvas dashboards—not screenshots. They support
+equipment symbols, animated flows, live values, and embedded charts.
 
-Add a `canvas` plan to the display's optional `display.json`:
+### Fastest path: Migration Studio
 
-```json
-{
-  "name": "Pump Train P&ID",
-  "element_id": 42,
-  "canvas": {
-    "width": 1600,
-    "height": 900,
-    "equipment": [
-      {"id": "feed", "label": "Feed Tank", "type": "tank", "x": 100, "y": 300},
-      {"id": "p101", "label": "P-101", "type": "pump", "x": 650, "y": 300}
-    ],
-    "flows": [
-      {"from": "feed", "to": "p101", "kind": "water", "animated": true}
-    ]
-  }
-}
-```
+1. Run `./run-ui.sh` and open `http://127.0.0.1:8765`.
+2. Connect to IDMP and search for the asset that will own the dashboard.
+3. Choose **Editable P&ID — animated pump train Canvas**.
+4. Select a target element ID returned by the asset search.
+5. Review, publish, then click **Open Canvas editor**.
 
-See [harness/FOLDER_SPEC.md](harness/FOLDER_SPEC.md) for equipment, flow,
-placement, and raw `pens` options.
+The included starter is
+[`scenarios/examples/pump-train-pnid/`](scenarios/examples/pump-train-pnid/).
+It has no deployment-specific tags, so it can create a basic editable P&ID on
+any valid IDMP element.
 
-### High-fidelity reference build
-
-[`build_plant_ops_canvas.py`](build_plant_ops_canvas.py) is the complete REST-only
-reference used to build the Desert Peak Solar Farm live microgrid P&ID. It
-demonstrates a 5200×2800 Canvas, animated AC/DC paths, live inverter values,
-embedded charts, verification queries, and a generated report.
+### CLI path
 
 ```bash
-export IDMP_URL=http://localhost:6842
-export IDMP_API_KEY='your-api-key'
-# Or set IDMP_USER and IDMP_PASSWORD instead.
+cp -R scenarios/examples/pump-train-pnid my-pnid
 
-python build_plant_ops_canvas.py
+# Replace element_id: 0 in both files with an ID from:
+./run.sh validate --keyword YOUR_ASSET
+
+./run.sh ingest-folder my-pnid -o scenarios/my-pnid.json
+./run.sh migrate scenarios/my-pnid.json --create-new --report reports/my-pnid.json
 ```
 
-The reference contains deployment-specific element and attribute IDs near the
-top of the file; update those constants for another asset model. Re-running it
-replaces only the prior dashboard with the same name and its embedded panels.
+Open the `edit_url` printed by the migration.
+
+The routing row in `tags.csv` is intentionally small:
+
+```csv
+panel_key,title,type,element_id,pi_tags,prompt
+process_overview,Pump Train Process Overview,pnid,YOUR_ELEMENT_ID,,Editable P&ID process overview
+```
+
+The matching `display.json` contains `canvas.equipment`,
+`canvas.flows`, and optional `canvas.panel_placements`. Add a `binding` with an
+IDMP attribute name for live values, or add regular `trend`, `gauge`, or `kpi`
+rows to embed live panels. See
+[harness/FOLDER_SPEC.md](harness/FOLDER_SPEC.md) for complete examples.
+
+### Advanced reference
+
+[`build_plant_ops_canvas.py`](build_plant_ops_canvas.py) is the REST-only
+high-fidelity Desert Peak Solar Farm reference. It demonstrates a 5200×2800
+Canvas, animated AC/DC paths, live inverter values, embedded charts, and
+verification queries. Its element and attribute IDs are deployment-specific;
+change the constants at the top before running it.
 
 ## Customer folder layout
 

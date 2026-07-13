@@ -101,6 +101,12 @@
               <div class="source-icon" aria-hidden="true">◇</div>
               <h3>Start from an example</h3>
               <p>Preview the workflow with an included industrial migration scenario.</p>
+              <label>
+                <span>Example target element ID</span>
+                <input type="number" id="target-element-id" list="target-element-options" min="1" placeholder="Select an element found in step 1">
+                <datalist id="target-element-options"></datalist>
+                <small>Required for the portable P&amp;ID example. Use an element returned by your asset search.</small>
+              </label>
               <div id="example-list" class="example-list"></div>
             </article>
           </div>

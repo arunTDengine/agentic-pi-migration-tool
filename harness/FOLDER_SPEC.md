@@ -28,7 +28,7 @@ Required columns (header row):
 | title | yes | Professional SCADA panel title |
 | type | yes | trend, gauge, kpi, bar, pie, scatter, bar-gauge, state, process/pid/pnid |
 | element_id | yes* | IDMP element ID (*or set in display.json) |
-| pi_tags | yes | PI tags, pipe-separated: `tag1\|tag2` |
+| pi_tags | no | PI tags, pipe-separated: `tag1\|tag2`; may be empty for a routing-only P&ID row |
 | prompt | no | AI panel prompt override |
 
 Example:
@@ -59,6 +59,18 @@ Themes: `control-room`, `rotating`, `process`
 Set `dashboard_type` to `canvas`, or include a `process`, `pid`, or `pnid`
 row in `tags.csv` to select Canvas automatically. The migration creates an
 editable Meta2d canvas through REST; it does not change historian data.
+
+Example `tags.csv` with two live panels:
+
+```csv
+panel_key,title,type,element_id,pi_tags,prompt
+pressure,Discharge Pressure Trend,trend,2023515242121480,discharge_pressure_psi,line chart for discharge pressure
+vibration,Vibration Severity,gauge,2023515242121480,vibration_mm_s,gauge with warning and alarm bands
+```
+
+Use the following `display.json` beside it. Because it explicitly sets
+`dashboard_type` to `canvas`, the panel rows can keep their normal chart types.
+Alternatively, a `process`, `pid`, or `pnid` row automatically selects Canvas.
 
 ```json
 {

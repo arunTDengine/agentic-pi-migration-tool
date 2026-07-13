@@ -31,6 +31,7 @@ SCENARIOS_DIR = ROOT / "scenarios"
 BUILTIN_EXAMPLES: dict[str, str] = {
     "summit-creek-oil": "Summit Creek oil — 3 dashboards (ops, P-101, SEP-101)",
     "examples/ops-overview": "Single display folder intake example",
+    "examples/pump-train-pnid": "Editable P&ID — animated pump train Canvas",
 }
 
 
@@ -79,6 +80,7 @@ class ValidateRequest(BaseModel):
 
 class ExampleIngestRequest(BaseModel):
     example_id: str
+    target_element_id: int | None = Field(default=None, gt=0)
 
 
 class MigrateRequest(BaseModel):
@@ -141,6 +143,9 @@ def _scenario_summary(scenario: dict[str, Any]) -> dict[str, Any]:
                 "theme": d.get("theme"),
                 "panel_count": len(d.get("panels", [])),
                 "has_screenshot": bool(d.get("reference_screenshot")),
+                "has_canvas_plan": bool(d.get("canvas")),
+                "canvas_equipment_count": len((d.get("canvas") or {}).get("equipment", [])),
+                "canvas_flow_count": len((d.get("canvas") or {}).get("flows", [])),
                 "panels": [
                     {
                         "key": p.get("key"),
@@ -156,6 +161,20 @@ def _scenario_summary(scenario: dict[str, Any]) -> dict[str, Any]:
             for d in displays
         ],
     }
+
+
+def _retarget_scenario(scenario: dict[str, Any], element_id: int) -> None:
+    """Point a built-in example at an element selected from the user's IDMP."""
+    displays = scenario.get("displays", [scenario])
+    for display in displays:
+        display["element_id"] = element_id
+        display["dashboard_id"] = None
+        for panel in display.get("panels", []):
+            panel["element_id"] = element_id
+        for equipment in (display.get("canvas") or {}).get("equipment", []):
+            binding = equipment.get("binding")
+            if binding:
+                binding["element_id"] = element_id
 
 
 def _create_job(scenario: dict[str, Any], *, source: str, scenario_path: Path) -> dict[str, Any]:
@@ -289,6 +308,8 @@ def ingest_example(body: ExampleIngestRequest) -> dict[str, Any]:
             if not src.exists():
                 raise HTTPException(status_code=404, detail=f"Example scenario not found: {example_id}")
             scenario = json.loads(src.read_text(encoding="utf-8"))
+        if body.target_element_id is not None:
+            _retarget_scenario(scenario, body.target_element_id)
         scenario_path.write_text(json.dumps(scenario, indent=2), encoding="utf-8")
     except HTTPException:
         shutil.rmtree(job_dir, ignore_errors=True)
