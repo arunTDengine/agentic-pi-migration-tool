@@ -5,7 +5,7 @@
 **Audience:** Internal engineering, solutions, and customer-success teams  
 **Status:** Ready for internal delivery  
 
-**Runs standalone** — no Cursor or IDE required. Use the browser **Migration Studio**, the **CLI**, or **Docker**. Optional agent docs (`AGENTS.md`) exist only if you choose to automate with an LLM coding agent.
+**Runs standalone** — Use the browser **Migration Studio**, the **CLI**, or **Docker**. Optional agent docs (`AGENTS.md`) exist only if you choose to automate with an LLM coding agent.
 
 Recreate PI Vision–style operator displays on **TDengine IDMP** when historian tags already map to IDMP elements. Publish editable **grid dashboards** and **Canvas P&IDs** over the IDMP REST API. No container shell access. No manual redraw of the customer display.
 
